@@ -12,7 +12,7 @@
 #define P_FLAG_OFFSET (1) /* previous block is allocated */
 #define P_FLAG_MASK (0x00000002)
 #define BLOCK_SIZE_MULTIPLIER (3)
-#define BLOCK_SIZE_MASK (0xfffffff4)
+#define BLOCK_SIZE_MASK (0xfffffffffffffff4)
 #define REMAINDER_SIZE_MULTIPLIER BLOCK_SIZE_MULTIPLIER
 #define REMAINDER_SIZE_MASK ((0xffffffff << 32) & BLOCK_SIZE_MASK)
 
@@ -24,7 +24,7 @@
 
 typedef void *mem_t;
 typedef uint64_t mem_size_t;
-typedef uint32_t block_head_t;
+typedef uint64_t block_head_t;
 typedef uint32_t block_size_t;
 
 typedef struct fast_block
@@ -43,7 +43,7 @@ typedef struct sorted_block
   block_head_t head;
   union
   {
-    struct info
+    struct
     {
       int32_t pred_offset;
       int32_t succ_offset;

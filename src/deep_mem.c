@@ -14,8 +14,9 @@ static void deep_free_fast_bins (void *ptr);
 static void deep_free_sorted_bins (void *ptr);
 
 /* helper functions for maintining the sorted_block skiplist */
-static void _split_into_two_sorted_blocks (sorted_block_t *block,
-                                           uint32_t aligned_size);
+static sorted_block_t *
+_split_into_two_sorted_blocks (sorted_block_t *block,
+                               uint32_t aligned_size);
 static void _merge_into_single_block (sorted_block_t *curr,
                                       sorted_block_t *next);
 static sorted_block_t *
@@ -227,7 +228,7 @@ deep_malloc_sorted_bins (uint32_t size)
       /* no suitable sorted_block */
       ret = (sorted_block_t *)pool->remainder_block.addr;
       block_set_size (&ret->head, get_remainder_size (pool));
-      _split_into_two_sorted_blocks (ret, aligned_size);
+      pool->remainder_block.addr = _split_into_two_sorted_blocks (ret, aligned_size);
     }
   else
     {
@@ -280,7 +281,7 @@ deep_free_fast_bins (void *ptr)
       = block_get_size (&block->head) - sizeof (block_head_t);
   uint32_t offset = ((payload_size + sizeof (block_head_t)) >> 3) - 1;
 
-  memset (block->payload, 0, payload_size);
+  memset (&block->payload, 0, payload_size);
 
   block_set_A_flag (&block->head, false);
   block->next = pool->fast_bins[offset].addr;
@@ -297,11 +298,12 @@ deep_free_sorted_bins (void *ptr)
   block_size_t payload_size
       = block_get_size (&block->head) - sizeof (block_head_t);
 
-  memset (block->payload, 0, payload_size);
+  memset (&block->payload, 0, payload_size);
 
   block_set_A_flag (&block->head, false);
 
   /* try to merge */
+  /* merge above */
   if (!prev_block_is_allocated (&block->head))
     {
       block_size_t prev_size
@@ -312,10 +314,16 @@ deep_free_sorted_bins (void *ptr)
       block = the_other;
     }
 
+  /* merge below */
   the_other = get_block_by_offset (block, block_get_size (&block->head));
   if (!block_is_allocated (&the_other->head))
     {
       _merge_into_single_block (block, the_other);
+    }
+  /* update remainder_block if it is involved */
+  if (the_other == pool->remainder_block.addr)
+    {
+      pool->remainder_block.addr = block;
     }
 
   if (!_sorted_block_is_in_skiplist (block))
@@ -333,7 +341,7 @@ deep_mem_migrate (void *new_mem, uint32_t size)
 }
 
 /* helper functions for maintining the sorted_block skiplist */
-static void
+static sorted_block_t *
 _split_into_two_sorted_blocks (sorted_block_t *block,
                                uint32_t aligned_size)
 {
@@ -344,10 +352,11 @@ _split_into_two_sorted_blocks (sorted_block_t *block,
   block_set_size (&new_block->head, new_block_size);
   block_set_A_flag (&new_block->head, false);
   block_set_P_flag (&new_block->head, false); /* by default */
-  _insert_sorted_block_to_skiplist (new_block);
 
   block_set_size (&block->head, aligned_size);
   pool->free_memory -= sizeof (block_head_t);
+
+  return new_block;
 }
 
 /**
@@ -411,7 +420,8 @@ _allocate_block_from_skiplist (uint32_t aligned_size)
         {
           return NULL;
         }
-      _split_into_two_sorted_blocks (ret, aligned_size);
+      sorted_block_t *remainder = _split_into_two_sorted_blocks (ret, aligned_size);
+      _insert_sorted_block_to_skiplist (remainder);
     }
   _remove_sorted_block_from_skiplist (ret);
 

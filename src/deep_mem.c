@@ -280,7 +280,7 @@ deep_free_fast_bins (void *ptr)
       = block_get_size (&block->head) - sizeof (block_head_t);
   uint32_t offset = ((payload_size + sizeof (block_head_t)) >> 3) - 1;
 
-  memset (block->payload, 0, payload_size);
+  memset (&block->payload, 0, payload_size);
 
   block_set_A_flag (&block->head, false);
   block->next = pool->fast_bins[offset].addr;
@@ -297,7 +297,7 @@ deep_free_sorted_bins (void *ptr)
   block_size_t payload_size
       = block_get_size (&block->head) - sizeof (block_head_t);
 
-  memset (block->payload, 0, payload_size);
+  memset (&block->payload, 0, payload_size);
 
   block_set_A_flag (&block->head, false);
 

@@ -132,7 +132,7 @@ bool deep_mem_init (void *mem, uint32_t size)
       = (sorted_block_t *)(get_pointer_by_offset_in_bytes (
           mem, sizeof (mem_pool_t)));
   /* all other fields are set as 0 */
-  pool->sorted_block.addr->level_of_indices = SORTED_BLOCK_INDICES_LEVEL;
+  pool->sorted_block.addr->payload.info.level_of_indices = SORTED_BLOCK_INDICES_LEVEL;
 
   pool->remainder_block.addr
       = (sorted_block_t *)(get_pointer_by_offset_in_bytes (
@@ -183,7 +183,7 @@ deep_malloc_fast_bins (uint32_t size)
   if (pool->fast_bins[offset].addr != NULL)
     {
       ret = pool->fast_bins[offset].addr;
-      pool->fast_bins[offset].addr = ret->next;
+      pool->fast_bins[offset].addr = ret->payload.next;
       P_flag = prev_block_is_allocated (&ret->head);
       payload_size = block_get_size (&ret->head) - sizeof (block_head_t);
     }
@@ -284,7 +284,7 @@ deep_free_fast_bins (void *ptr)
   memset (&block->payload, 0, payload_size);
 
   block_set_A_flag (&block->head, false);
-  block->next = pool->fast_bins[offset].addr;
+  block->payload.next = pool->fast_bins[offset].addr->payload.next;
   pool->fast_bins[offset].addr = block;
 
   pool->free_memory += payload_size;
@@ -431,7 +431,7 @@ _allocate_block_from_skiplist (uint32_t aligned_size)
 static inline bool
 _sorted_block_is_in_skiplist (sorted_block_t *block)
 {
-  return (block->pred_offset != 0 || block->level_of_indices != 0);
+  return (block->payload.info.pred_offset != 0 || block->payload.info.level_of_indices != 0);
 }
 
 /**
@@ -457,17 +457,17 @@ _find_sorted_block_by_size_on_index (sorted_block_t *node, uint32_t size,
       prev = curr; /* curr is the candidate of infimum. */
       /* reached the end of the skiplist or the biggest smaller sorted block */
       if (index_level >= SORTED_BLOCK_INDICES_LEVEL
-          || curr->offsets[index_level] == 0)
+          || curr->payload.info.offsets[index_level] == 0)
         {
           break;
         }
-      curr = get_block_by_offset (curr, curr->offsets[index_level]);
+      curr = get_block_by_offset (curr, curr->payload.info.offsets[index_level]);
     }
 
   /* return a node with no indices to avoid copying indices. */
-  if (block_get_size (&curr->head) == size && curr->succ_offset != 0)
+  if (block_get_size (&curr->head) == size && curr->payload.info.succ_offset != 0)
     {
-      return get_block_by_offset (curr, curr->succ_offset);
+      return get_block_by_offset (curr, curr->payload.info.succ_offset);
     }
 
   return prev;
@@ -486,30 +486,27 @@ _find_sorted_block_by_size (sorted_block_t *node, uint32_t size)
   sorted_block_t *curr = node;
 
   /* indices should only exists on first node in each sub-list. */
-  while (curr->pred_offset != 0)
+  while (curr->payload.info.pred_offset != 0)
     {
-      curr = get_block_by_offset (curr, curr->pred_offset);
+      curr = get_block_by_offset (curr, curr->payload.info.pred_offset);
     }
 
   while (block_get_size (&curr->head) < size)
     {
       uint32_t index_level
-          = SORTED_BLOCK_INDICES_LEVEL - curr->level_of_indices;
+          = SORTED_BLOCK_INDICES_LEVEL - curr->payload.info.level_of_indices;
 
       /* skip non-existing indices, to node with size <= than desired */
       while (index_level < SORTED_BLOCK_INDICES_LEVEL
-             || curr->offsets[index_level] == 0
-             || (block_get_size (
-                     &get_block_by_offset (curr, curr->offsets[index_level])
-                          ->head)
-                 > size))
+             || curr->payload.info.offsets[index_level] == 0
+             || (block_get_size (&get_block_by_offset (curr, curr->payload.info.offsets[index_level])->head) > size))
         {
           index_level++;
         }
 
       /* reached the end of the skiplist or the biggest smaller sorted block */
       if (index_level >= SORTED_BLOCK_INDICES_LEVEL
-          || curr->offsets[index_level] == 0)
+          || curr->payload.info.offsets[index_level] == 0)
         {
           break;
         }
@@ -525,9 +522,9 @@ _find_sorted_block_by_size (sorted_block_t *node, uint32_t size)
     }
 
   /* return a node with no indices to avoid copying indices. */
-  if (curr->succ_offset != 0)
+  if (curr->payload.info.succ_offset != 0)
     {
-      curr = get_block_by_offset (curr, curr->succ_offset);
+      curr = get_block_by_offset (curr, curr->payload.info.succ_offset);
     }
 
   return curr;
@@ -543,41 +540,41 @@ _insert_sorted_block_to_skiplist (sorted_block_t *block)
   /* insert into the chain with same size. */
   if (pos != NULL && block_get_size (&pos->head) == size)
     {
-      block->pred_offset = get_offset_between_blocks (block, pos);
-      if (pos->succ_offset != 0)
+      block->payload.info.pred_offset = get_offset_between_blocks (block, pos);
+      if (pos->payload.info.succ_offset != 0)
         {
-          block->succ_offset
-              = pos->succ_offset - get_offset_between_blocks (pos, block);
+          block->payload.info.succ_offset
+              = pos->payload.info.succ_offset - get_offset_between_blocks (pos, block);
         }
       else
         {
-          block->succ_offset = 0; /* end of chain */
+          block->payload.info.succ_offset = 0; /* end of chain */
         }
-      pos->succ_offset = get_offset_between_blocks (pos, block);
+      pos->payload.info.succ_offset = get_offset_between_blocks (pos, block);
 
       return;
     }
 
-  block->level_of_indices
+  block->payload.info.level_of_indices
       = ((uint32_t) (next () >> 32)) % SORTED_BLOCK_INDICES_LEVEL + 1;
 
   for (uint32_t index_level
-       = SORTED_BLOCK_INDICES_LEVEL - block->level_of_indices;
+       = SORTED_BLOCK_INDICES_LEVEL - block->payload.info.level_of_indices;
        index_level < SORTED_BLOCK_INDICES_LEVEL; ++index_level)
     {
       pos = _find_sorted_block_by_size_on_index (pool->sorted_block.addr, size,
                                                  index_level);
-      if (pos->offsets[index_level] != 0)
+      if (pos->payload.info.offsets[index_level] != 0)
         {
-          block->offsets[index_level]
-              = pos->offsets[index_level]
+          block->payload.info.offsets[index_level]
+              = pos->payload.info.offsets[index_level]
                 - get_offset_between_blocks (pos, block);
         }
       else
         {
-          block->offsets[index_level] = 0;
+          block->payload.info.offsets[index_level] = 0;
         }
-      pos->offsets[index_level] = get_offset_between_blocks (pos, block);
+      pos->payload.info.offsets[index_level] = get_offset_between_blocks (pos, block);
     }
 }
 
@@ -595,34 +592,34 @@ static void _remove_sorted_block_from_skiplist (sorted_block_t *block)
   block_size_t size = block_get_size (&block->head);
 
   for (uint32_t index_level
-       = SORTED_BLOCK_INDICES_LEVEL - block->level_of_indices;
+       = SORTED_BLOCK_INDICES_LEVEL - block->payload.info.level_of_indices;
        index_level < SORTED_BLOCK_INDICES_LEVEL; ++index_level)
     {
       /* -1 to find the strictly smaller node. */
       prev = _find_sorted_block_by_size_on_index (pool->sorted_block.addr,
                                                   size - 1, index_level);
-      if (block->offsets[index_level] != 0)
+      if (block->payload.info.offsets[index_level] != 0)
         {
-          prev->offsets[index_level] += block->offsets[index_level];
+          prev->payload.info.offsets[index_level] += block->payload.info.offsets[index_level];
         }
       else
         {
-          prev->offsets[index_level] = 0;
+          prev->payload.info.offsets[index_level] = 0;
         }
     }
 
-  if (block->pred_offset != 0)
+  if (block->payload.info.pred_offset != 0)
     {
-      if (block->succ_offset != 0)
+      if (block->payload.info.succ_offset != 0)
         {
-          get_block_by_offset (block, block->pred_offset)->succ_offset
-              += block->succ_offset;
-          get_block_by_offset (block, block->succ_offset)->pred_offset
-              += block->pred_offset;
+          get_block_by_offset (block, block->payload.info.pred_offset)->payload.info.succ_offset
+              += block->payload.info.succ_offset;
+          get_block_by_offset (block, block->payload.info.succ_offset)->payload.info.pred_offset
+              += block->payload.info.pred_offset;
         }
       else
         {
-          get_block_by_offset (block, block->pred_offset)->succ_offset = 0;
+          get_block_by_offset (block, block->payload.info.pred_offset)->payload.info.succ_offset = 0;
         }
     }
   /* no other cases, as if it is the first node, it should be the only node. */

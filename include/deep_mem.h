@@ -35,7 +35,7 @@ typedef struct fast_block
     uint32_t _padding; /* TODO! update for 64 bits system */
     struct fast_block *next;
     void *payload;
-  };
+  } payload;
 } fast_block_t;
 
 typedef struct sorted_block
@@ -43,7 +43,7 @@ typedef struct sorted_block
   block_head_t head;
   union
   {
-    struct info
+    struct
     {
       int32_t pred_offset;
       int32_t succ_offset;
@@ -57,9 +57,9 @@ typedef struct sorted_block
       int32_t offsets[SORTED_BLOCK_INDICES_LEVEL];
       // padding
       // uint32_t footer;
-    };
+    } info;
     void *payload;
-  };
+  } payload;
 } sorted_block_t;
 
 typedef struct mem_pool

@@ -12,7 +12,7 @@
 #define P_FLAG_OFFSET (1) /* previous block is allocated */
 #define P_FLAG_MASK (0x00000002)
 #define BLOCK_SIZE_MULTIPLIER (3)
-#define BLOCK_SIZE_MASK (0xfffffff4)
+#define BLOCK_SIZE_MASK (0xfffffffc)
 #define REMAINDER_SIZE_MULTIPLIER BLOCK_SIZE_MULTIPLIER
 #define REMAINDER_SIZE_MASK ((0xffffffff << 32) & BLOCK_SIZE_MASK)
 

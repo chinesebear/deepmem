@@ -1,2 +1,4 @@
 build/
 bin/
+src/deep_main.c
+.vscode/settings.json

@@ -3,23 +3,22 @@
 
 #include <stdbool.h>
 
-#define FAST_BIN_LENGTH (8)
-#define FAST_BIN_MAX_SIZE (64)   /* 8 * 8 bytes */
-#define SORTED_BIN_MIN_SIZE (72) /* 64 + 8 bytes */
+#define FAST_BIN_LENGTH (8) /* eight size options for fast bins */
+#define FAST_BIN_MAX_SIZE (64) /* 8 * 8 bytes */
+#define SORTED_BIN_MIN_SIZE (FAST_BIN_MAX_SIZE + 8) /* 64 + 8 bytes */
 
-#define A_FLAG_OFFSET (0) /* allocated */
-#define A_FLAG_MASK (0x00000001)
-#define P_FLAG_OFFSET (1) /* previous block is allocated */
-#define P_FLAG_MASK (0x00000002)
-#define BLOCK_SIZE_MULTIPLIER (3)
-#define BLOCK_SIZE_MASK (0xfffffffc)
-#define REMAINDER_SIZE_MULTIPLIER BLOCK_SIZE_MULTIPLIER
+#define A_FLAG_OFFSET (0) /* is allocated */
+#define A_FLAG_MASK (1 << A_FLAG_OFFSET)
+#define P_FLAG_OFFSET (1) /* is previous block allocated */
+#define P_FLAG_MASK (1 << P_FLAG_OFFSET)
+#define BLOCK_SIZE_MASK (0xFFFFFFFF - A_FLAG_MASK - P_FLAG_MASK)
 #define REMAINDER_SIZE_MASK ((0xffffffff << 32) & BLOCK_SIZE_MASK)
 
 #define SORTED_BLOCK_INDICES_LEVEL (13)
 
-/* need to update when *_SIZE_MULTIPLIER changes. */
+/* Align the size up to a multiple of eight*/
 #define ALIGN_MEM_SIZE(size) (((size + 0x7) >> 3) << 3)
+/* Align the size down to a multiple of eight */
 #define ALIGN_MEM_SIZE_TRUNC(size) ((size >> 3) << 3)
 
 typedef void *mem_t;
@@ -27,12 +26,12 @@ typedef uint64_t mem_size_t;
 typedef uint32_t block_head_t;
 typedef uint32_t block_size_t;
 
+/* For storing small blocks of memory */
 typedef struct fast_block
 {
   block_head_t head;
   union
   {
-    uint32_t _padding; /* TODO! update for 64 bits system */
     struct fast_block *next;
     void *payload;
   } payload;
@@ -72,14 +71,14 @@ typedef struct mem_pool
   } sorted_block;
   union
   {
-    uint64_t _padding;
-    sorted_block_t *addr;
-  } remainder_block;
+    uint64_t _remainder_block_head_padding;
+    block_head_t *remainder_block_head; /* The head of remainder */
+  };
   union
   {
-    uint64_t _padding;
-    sorted_block_t *addr;
-  } remainder_block_end; /* should not be dereferenced */
+    uint64_t _remainder_block_end_padding;
+    void *remainder_block_end; /* The address of the last byte in remainder */
+  }; /* should not be dereferenced */
   union
   {
     uint64_t _padding;

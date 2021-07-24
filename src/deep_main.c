@@ -30,6 +30,20 @@ log_memory (void *buff, size_t size)
     }
 }
 
+void cycletest(uint32_t n) {
+  printf("\nTEST ON MALLOCING/FREEING %u bytes: \n\n", n);
+  for(int i = 1; i <= ITER; i++) {
+    uint8_t *p = deep_malloc(n);
+    deep_info("malloc %d times, @%p", i, p);
+    if (p == NULL) {
+      deep_error("malloc fail @%d", i);
+      break;
+    }
+    *p = 0xFF;
+    deep_free(p);
+  }
+}
+
 int main(void) {
     // deep_info("This a log for information");
     // deep_debug("This a log for debuging");
@@ -37,18 +51,8 @@ int main(void) {
     // deep_error("This a log for error");
     // deep_dump("example", example, 100);
     deep_mem_init(deepvm_mempool, DEEPVM_MEMPOOL_SIZE);
-    for(int i = 1; i <= ITER; i++) {
-        uint8_t *p = deep_malloc(100);
-        deep_info("malloc %d times, @%p", i, p);
-        if (i >= 290) {
-            // log_memory(deepvm_mempool, DEEPVM_MEMPOOL_SIZE);
-        }
-        if (p == NULL) {
-            deep_error("malloc fail @%d", i);
-            break;
-        }
-        *p = 0xFF;
-        deep_free(p);
-    }
+    cycletest(100); /* sorted */
+    cycletest(60);  /* sorted on 64bit; fast on 32bit */
+    cycletest(40);  /* fast */
     return 0;
 }

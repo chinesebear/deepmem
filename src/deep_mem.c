@@ -119,8 +119,8 @@ get_offset_between_blocks (struct sorted_block *origin,
 static inline mem_size_t
 get_remainder_size (struct mem_pool const *pool)
 {
-  return get_offset_between_pointers_in_bytes (pool->remainder_block_end.addr,
-                                               pool->remainder_block.addr);
+  return get_offset_between_pointers_in_bytes (pool->remainder_block_end,
+                                               pool->remainder_block_head);
 }
 
 bool deep_mem_init (void *mem, uint32_t size)
@@ -138,31 +138,31 @@ bool deep_mem_init (void *mem, uint32_t size)
       return false; /* given buffer is too small */
     }
 
-  memset (mem, 0, size);
+  memset(mem, 0, size);
   mem_size_t aligned_size = ALIGN_MEM_SIZE_TRUNC(size);
 
   pool = (mem_pool_t *)mem;
-  pool->free_memory = aligned_size - sizeof (mem_pool_t)
-                      - sizeof (sorted_block_t) - sizeof (block_head_t);
+  pool->free_memory = aligned_size - sizeof(mem_pool_t)
+                      - sizeof(sorted_block_t) - sizeof(block_head_t);
   /* the first node in the list, to simplify implementation */
-  pool->sorted_block.addr
-      = (sorted_block_t *)(get_pointer_by_offset_in_bytes(
-          mem, sizeof(mem_pool_t)));
+  pool->sorted_block.addr = 
+      (sorted_block_t *)(get_pointer_by_offset_in_bytes(
+        mem, sizeof(mem_pool_t)));
   /* all other fields are set as 0 */
-  pool->sorted_block.addr->payload.info.level_of_indices = SORTED_BLOCK_INDICES_LEVEL;
-  pool->remainder_block.addr
-      = (sorted_block_t *)(get_pointer_by_offset_in_bytes(
-          mem, sizeof(mem_pool_t) + sizeof(sorted_block_t)));
-  pool->remainder_block_end.addr
-      = (sorted_block_t *)(get_pointer_by_offset_in_bytes(
-          mem, aligned_size - 8)); // -8 for safety
+  pool->sorted_block.addr->payload.info.level_of_indices = 
+      SORTED_BLOCK_INDICES_LEVEL;
+  pool->remainder_block_head =
+      (block_head_t *)(get_pointer_by_offset_in_bytes(
+        mem, sizeof(mem_pool_t) + sizeof(sorted_block_t)));
+  pool->remainder_block_end = 
+      (get_pointer_by_offset_in_bytes(mem, aligned_size - 8)); // -8 for safety
   for (int i = 0; i < FAST_BIN_LENGTH; ++i)
     {
       pool->fast_bins[i].addr = NULL;
     }
   // initialise remainder block's head
-  block_set_A_flag (&pool->remainder_block.addr->head, false);
-  block_set_P_flag (&pool->remainder_block.addr->head, true);
+  block_set_A_flag (pool->remainder_block_head, false);
+  block_set_P_flag (pool->remainder_block_head, true);
 
   return true;
 }
@@ -174,95 +174,111 @@ deep_mem_destroy (void)
 }
 
 void *
-deep_malloc (uint32_t size)
+deep_malloc(uint32_t size)
 {
   if (pool->free_memory < size)
-    {
-      return NULL;
-    }
-  if (size <= FAST_BIN_MAX_SIZE)
-    {
-      return deep_malloc_fast_bins (size);
-    }
-  return deep_malloc_sorted_bins (size);
+  {
+    return NULL;
+  }
+
+  uint32_t aligned_size = ALIGN_MEM_SIZE(size + block_payload_offset);
+
+  if (aligned_size <= FAST_BIN_MAX_SIZE)
+  {
+    return deep_malloc_fast_bins(aligned_size);
+  }
+  return deep_malloc_sorted_bins(aligned_size);
 }
 
+/* Note that aligning is done in deep_malloc, the size shoulde already be 
+ * aligned here.
+ */
 static void *
-deep_malloc_fast_bins (uint32_t size)
+deep_malloc_fast_bins(block_size_t aligned_size)
 {
-  block_size_t aligned_size = ALIGN_MEM_SIZE (size + block_payload_offset);
   uint32_t offset = (aligned_size >> 3) - 1;
   bool P_flag = false;
   fast_block_t *ret = NULL;
   block_size_t payload_size;
-  if (pool->fast_bins[offset].addr != NULL)
-    {
-      ret = pool->fast_bins[offset].addr;
-      pool->fast_bins[offset].addr = ret->payload.next;
-      P_flag = prev_block_is_allocated (&ret->head);
-      payload_size = block_get_size (&ret->head) - block_payload_offset;
-    }
-  else if (aligned_size <= get_remainder_size (pool))
-    {
-      ret = (fast_block_t *)(get_pointer_by_offset_in_bytes (
-          pool->remainder_block_end.addr,
-          -(int64_t)aligned_size - sizeof (block_head_t)));
-      pool->remainder_block_end.addr = (sorted_block_t *)ret;
+  
+  if (pool->fast_bins[offset].addr != NULL) 
+  {
+    PRINT_ARG("%s", "Fast block from stack\n");
+    ret = pool->fast_bins[offset].addr;
+    pool->fast_bins[offset].addr = ret->payload.next;
+    P_flag = prev_block_is_allocated(&ret->head);
+    payload_size = block_get_size(&ret->head);
+  }
+  // When there are no available fast blocks, grab at the end of the remainder.
+  else if (aligned_size <= get_remainder_size(pool)) 
+  {
+    PRINT_ARG("%s", "Fast block from remainder\n");
+    ret = (fast_block_t *)(get_pointer_by_offset_in_bytes
+        (pool->remainder_block_end,
+        -(int64_t)aligned_size - sizeof(block_head_t)));
+    pool->remainder_block_end = (void *)ret;
 
-      payload_size = aligned_size - block_payload_offset;
-      block_set_size (&ret->head, payload_size);
-      pool->free_memory -= sizeof (block_head_t);
-    }
-  else
-    {
-      return NULL;
-    }
+    payload_size = aligned_size - block_payload_offset;
+    block_set_size (&ret->head, payload_size);
+    pool->free_memory -= sizeof(block_head_t);
+  }
+  else 
+  {
+    return NULL;
+  }
 
   memset (&ret->payload, 0, payload_size);
   block_set_A_flag (&ret->head, true);
   block_set_P_flag (&ret->head, P_flag);
   pool->free_memory -= payload_size;
+
+  PRINT_ARG("Remainder start (after allocation): %p\n", pool->remainder_block_head);
+  PRINT_ARG("Remainder end (after allocation):   %p\n", pool->remainder_block_end);
+  PRINT_ARG("Payload size (after allocation):    %u\n", payload_size);
+  PRINT_ARG("Free memory (after allocation):     %llu\n", pool->free_memory);
+
   return &ret->payload;
 }
 
+/* Note that aligning is done in deep_malloc, the size should already be 
+ * aligned here.
+ */
 static void *
-deep_malloc_sorted_bins (uint32_t size)
+deep_malloc_sorted_bins (block_size_t aligned_size)
 {
-  block_size_t aligned_size = ALIGN_MEM_SIZE(size + block_payload_offset);
   sorted_block_t *ret = NULL;
   block_size_t payload_size = aligned_size - block_payload_offset;
   if ((pool->sorted_block.addr != NULL)
       && ((ret = _allocate_block_from_skiplist(aligned_size)) != NULL))
-    {
-      PRINT_ARG("%s", "Allocate from skiplist\n");
-      /* pass */
-    }
+  {
+    PRINT_ARG("%s", "Allocate from skiplist\n");
+    /* pass */
+  }
   else if (aligned_size <= get_remainder_size (pool))
-    {
-      PRINT_ARG("%s", "Allocate not from skiplist (start)\n");
-      /* no suitable sorted_block */
-      ret = (sorted_block_t *)pool->remainder_block.addr;
-      block_set_size(
-          &ret->head, get_remainder_size(pool) - block_payload_offset);
-      PRINT_ARG("HEAD: %u\n", ret->head);
-      pool->remainder_block.addr
-          = _split_into_two_sorted_blocks(ret, aligned_size);
-      PRINT_ARG("%s", "Allocate not from skiplist (finish)\n");
-    }
+  {
+    PRINT_ARG("%s", "Allocate not from skiplist (start)\n");
+    /* no suitable sorted_block */
+    ret = (sorted_block_t *)pool->remainder_block_head;
+    block_set_size(
+        &ret->head, get_remainder_size(pool) - block_payload_offset);
+    pool->remainder_block_head
+        = (block_head_t *)_split_into_two_sorted_blocks(ret, aligned_size);
+    PRINT_ARG("%s", "Allocate not from skiplist (finish)\n");
+  }
   else
-    {
-      return NULL;
-    }
+  {
+    return NULL;
+  }
 
   memset (&ret->payload, 0, payload_size);
   block_set_A_flag (&ret->head, true);
   block_set_P_flag (&get_block_by_offset (ret, aligned_size)->head, true);
   pool->free_memory -= payload_size;
 
-  PRINT_ARG("Remainder start (allocation): %p\n", pool->remainder_block.addr);
-  PRINT_ARG("Remainder end (allocation):   %p\n", pool->remainder_block_end.addr);
-  PRINT_ARG("Payload size (allocation):    %u\n", payload_size);
-  PRINT_ARG("Free memory (allocation):     %llu\n", pool->free_memory);
+  PRINT_ARG("Remainder start (after allocation): %p\n", pool->remainder_block_head);
+  PRINT_ARG("Remainder end (after allocation):   %p\n", pool->remainder_block_end);
+  PRINT_ARG("Payload size (after allocation):    %u\n", payload_size);
+  PRINT_ARG("Free memory (after allocation):     %llu\n", pool->free_memory);
 
   return &ret->payload;
 }
@@ -276,38 +292,49 @@ deep_realloc (void *ptr, uint32_t size)
 void
 deep_free (void *ptr)
 {
-  void *head
-      = get_pointer_by_offset_in_bytes (ptr, -(int64_t)block_payload_offset);
+  void *head = 
+      get_pointer_by_offset_in_bytes(ptr, -(int64_t)block_payload_offset);
  
-  if (ptr == NULL || !block_is_allocated ((block_head_t *)head))
-    {
-      PRINT_ARG("%s", "Double free\n");
-      return;
-    }
-  block_size_t size = block_get_size ((block_head_t *)head);
+  if (ptr == NULL || !block_is_allocated((block_head_t *)head))
+  {
+    PRINT_ARG("%s", "Double free\n");
+    return;
+  }
+  block_size_t block_size = 
+      block_get_size((block_head_t *)head) + block_payload_offset;
 
-  if (size <= FAST_BIN_MAX_SIZE)
-    {
-      deep_free_fast_bins (head);
-    }
+  if (block_size <= FAST_BIN_MAX_SIZE)
+  {
+    deep_free_fast_bins(head);
+  }
   else
-    {
-      deep_free_sorted_bins (head);
-    }
+  {
+    deep_free_sorted_bins(head);
+  }
 }
 
 static void
-deep_free_fast_bins (void *ptr)
+deep_free_fast_bins(void *ptr)
 {
   fast_block_t *block = ptr;
   // block size is payload size according to spec.
   block_size_t payload_size = block_get_size(&block->head);
-  uint32_t offset = ((payload_size + sizeof (block_head_t)) >> 3) - 1;
+  uint32_t offset = ((payload_size + block_payload_offset) >> 3) - 1;
+
   memset (&block->payload, 0, payload_size);
   block_set_A_flag (&block->head, false);
-  block->payload.next = pool->fast_bins[offset].addr->payload.next;
-  pool->fast_bins[offset].addr = block;
   pool->free_memory += payload_size;
+
+  if (block->payload.next != NULL) 
+  {
+    block->payload.next = pool->fast_bins[offset].addr->payload.next;
+  }
+  pool->fast_bins[offset].addr = block;
+
+  PRINT_ARG("Remainder start (after free): %p\n", pool->remainder_block_head);
+  PRINT_ARG("Remainder end (after free):   %p\n", pool->remainder_block_end);
+  PRINT_ARG("Payload size (after free):    %u\n", payload_size);
+  PRINT_ARG("Free memory (after free):     %llu\n", pool->free_memory);
 }
 
 static void
@@ -345,10 +372,10 @@ deep_free_sorted_bins (void *ptr)
       _merge_into_single_block (block, the_other);
     }
   /* update remainder_block if it is involved */
-  if (the_other == pool->remainder_block.addr)
+  if (the_other == (sorted_block_t *)pool->remainder_block_head)
     {
       PRINT_ARG("%s", "Merge into remainder\n");
-      pool->remainder_block.addr = block;
+      pool->remainder_block_head = (block_head_t *)block;
     }
 
   if (!_sorted_block_is_in_skiplist (block))
@@ -358,10 +385,10 @@ deep_free_sorted_bins (void *ptr)
 
   pool->free_memory += payload_size;
 
-  PRINT_ARG("Remainder start (free): %p\n", pool->remainder_block.addr);
-  PRINT_ARG("Remainder end (free):   %p\n", pool->remainder_block_end.addr);
-  PRINT_ARG("Payload size (free):    %u\n", payload_size);
-  PRINT_ARG("Free memory (free):     %llu\n", pool->free_memory);
+  PRINT_ARG("Remainder start (after free): %p\n", pool->remainder_block_head);
+  PRINT_ARG("Remainder end (after free):   %p\n", pool->remainder_block_end);
+  PRINT_ARG("Payload size (after free):    %u\n", payload_size);
+  PRINT_ARG("Free memory (after free):     %llu\n", pool->free_memory);
 }
 
 bool
